@@ -22,6 +22,7 @@ import (
 	"github.com/mayfly-ssh/mayfly-cli/internal/oauth/providers/mayflyserver"
 	"github.com/mayfly-ssh/mayfly-cli/internal/performance"
 	"github.com/mayfly-ssh/mayfly-cli/internal/profile"
+	"github.com/mayfly-ssh/mayfly-cli/internal/ssh"
 	"github.com/mayfly-ssh/mayfly-cli/internal/version"
 )
 
@@ -62,8 +63,19 @@ type globalFlags struct {
 	credBackend  string
 	timeoutSec   int
 	retries      int
+	certCache    string
+	renewThresh  int
+	certLifetime int
+	preferUser   string
 	startupBegin time.Time
+	// fromSSH indicates the ssh command pre-parsed its control flags into gf
+	// (since it disables cobra flag parsing for OpenSSH passthrough).
+	fromSSH bool
 }
+
+// exitCode is the process exit code the CLI returns. The ssh command sets it to
+// the launched OpenSSH client's exit code so it is propagated faithfully.
+var exitCode int
 
 // Execute is the CLI entrypoint.
 func Execute() {
@@ -72,6 +84,7 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+	os.Exit(exitCode)
 }
 
 // NewRootCommand builds the root cobra command and registers subcommands.
@@ -85,7 +98,13 @@ func NewRootCommand() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version.Version,
-		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// The ssh command disables flag parsing for OpenSSH passthrough, so
+			// its Mayfly control flags (--profile/--server/--dev) are extracted
+			// from the raw args here before the App is built.
+			if cmd.Name() == "ssh" {
+				preparseSSHGlobals(gf, args)
+			}
 			app, err := buildApp(cmd, gf)
 			if err != nil {
 				return err
@@ -114,6 +133,10 @@ func NewRootCommand() *cobra.Command {
 	flags.StringVar(&gf.credBackend, "credential-backend", "", "credential backend: auto|keyring|file")
 	flags.IntVar(&gf.timeoutSec, "timeout", 0, "request timeout in seconds")
 	flags.IntVar(&gf.retries, "retries", -1, "max request retries")
+	flags.StringVar(&gf.certCache, "cert-cache", "", "certificate cache directory")
+	flags.IntVar(&gf.renewThresh, "renew-threshold", -1, "renew when fewer than N seconds remain")
+	flags.IntVar(&gf.certLifetime, "cert-lifetime", -1, "requested certificate lifetime in seconds")
+	flags.StringVar(&gf.preferUser, "ssh-user", "", "preferred SSH login user when none is given")
 
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newDiagnosticsCommand())
@@ -121,7 +144,29 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newLogoutCommand())
 	root.AddCommand(newWhoamiCommand())
 	root.AddCommand(newAuthCommand())
+	root.AddCommand(newCertCommand())
+	root.AddCommand(newSSHCommand())
 	return root
+}
+
+// preparseSSHGlobals extracts the Mayfly control flags from a raw `ssh` argv so
+// they take effect during App construction. Parse errors are ignored here; the
+// ssh command re-parses and reports them.
+func preparseSSHGlobals(gf *globalFlags, args []string) {
+	gf.fromSSH = true
+	p, err := ssh.ParseArgs(args)
+	if err != nil {
+		return
+	}
+	if p.Dev {
+		gf.dev = true
+	}
+	if p.Profile != "" {
+		gf.profile = p.Profile
+	}
+	if p.Server != "" {
+		gf.server = p.Server
+	}
 }
 
 // buildApp resolves configuration and constructs every shared subsystem,
@@ -227,7 +272,9 @@ func resolveProfileName(gf *globalFlags, profiles *profile.Store) string {
 func flagOverrides(cmd *cobra.Command, gf *globalFlags) config.FlagOverride {
 	o := config.FlagOverride{}
 	f := cmd.Flags()
-	if f.Changed("server") {
+	// The ssh command disables flag parsing, so Changed() is always false there;
+	// honor the pre-parsed --server value instead.
+	if f.Changed("server") || (gf.fromSSH && gf.server != "") {
 		o.ServerURL = &gf.server
 	}
 	if f.Changed("provider") {
@@ -247,6 +294,18 @@ func flagOverrides(cmd *cobra.Command, gf *globalFlags) config.FlagOverride {
 	}
 	if f.Changed("retries") {
 		o.Retries = &gf.retries
+	}
+	if f.Changed("cert-cache") {
+		o.CertCachePath = &gf.certCache
+	}
+	if f.Changed("renew-threshold") {
+		o.RenewThresholdSec = &gf.renewThresh
+	}
+	if f.Changed("cert-lifetime") {
+		o.CertLifetimeSec = &gf.certLifetime
+	}
+	if f.Changed("ssh-user") {
+		o.PreferredUsername = &gf.preferUser
 	}
 	return o
 }

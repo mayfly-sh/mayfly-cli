@@ -50,9 +50,23 @@ go build -ldflags "\
 ./mayfly auth remove keycloak/vasu
 ./mayfly logout                         # or: logout --all
 
-# Profiles, JSON, developer timing — available on every auth command
+# SSH — native client experience (auto auth + certificate + OpenSSH passthrough)
+./mayfly ssh web-01
+./mayfly ssh deploy@web-01 -J bastion -p 2222
+./mayfly ssh --dry-run web-01           # show the resolved ssh command, don't connect
+./mayfly ssh web-01 -- systemctl status nginx
+
+# Certificates (mayfly ssh manages these for you; direct control when needed)
+./mayfly cert issue                     # request a fresh certificate
+./mayfly cert inspect --json            # id, principals, validity, fingerprints, CA, extensions
+./mayfly cert cache --prune             # list cached certs (drop expired)
+./mayfly cert renew                     # reissue now
+./mayfly cert remove --all
+
+# Profiles, JSON, developer timing
 ./mayfly --profile staging whoami --json
 ./mayfly --dev login github
+./mayfly ssh --dev web-01               # certificate + connection timing
 
 # Foundation utilities
 ./mayfly version --json
@@ -61,6 +75,7 @@ go build -ldflags "\
 
 Full guides: [`docs/authentication.md`](docs/authentication.md),
 [`docs/configuration.md`](docs/configuration.md),
+[`docs/ssh.md`](docs/ssh.md), [`docs/certificates.md`](docs/certificates.md),
 [`docs/developer-mode.md`](docs/developer-mode.md).
 
 ## Architecture (summary)
@@ -76,10 +91,13 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 | `internal/client` | reusable HTTP client: auth + context injection, timeouts, retries, structured errors, `--dev` tracing |
 | `internal/browser` | best-effort default-browser launcher |
 | `internal/performance` | `--dev` profiler + timing table (duration / percent / grade) |
-| `internal/ssh` | SSH diagnostics primitives (verbosity, option passthrough, cert/algorithm inspection) — no commands |
+| `internal/ssh` | SSH primitives: verbosity, option-passthrough arg parsing (`ParseArgs`), cert/algorithm inspection, system-`ssh` launcher (`Exec`/`RenderCommand`) |
+| `internal/sshkey` | Ed25519 keygen + OpenSSH private-key/public-line/fingerprint marshaling |
+| `internal/certcache` | secure per-identity certificate cache (0700 dir / 0600 key, atomic, symlink-rejecting); metadata + expiry pruning |
+| `internal/certs` | certificate lifecycle: issue + reuse/renew/reissue decision (never serves an expired cert) + local inspect |
 | `internal/config` | layered config: flags > profile > env > user > system > defaults, with value origins |
 | `internal/platform` / `hardware` / `machine` / `version` / `logging` | environment & identity helpers |
-| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `version`, `diagnostics` |
+| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `version`, `diagnostics` |
 | `pkg/mayfly` | stable public API facade |
 
 ## Configuration precedence

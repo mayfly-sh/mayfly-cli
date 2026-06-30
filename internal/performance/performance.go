@@ -36,7 +36,14 @@ const (
 	PhaseCredentialLoad    Phase = "credential_lookup"
 	PhaseCredentialStore   Phase = "credential_storage"
 	PhaseResponseParse     Phase = "response_parse"
-	PhaseOverall           Phase = "overall"
+	// SSH/certificate lifecycle phases (011C).
+	PhaseCacheLookup    Phase = "cache_lookup"
+	PhaseCertRequest    Phase = "cert_request"
+	PhaseCertVerify     Phase = "cert_verify"
+	PhaseSSHStartup     Phase = "ssh_startup"
+	PhaseConnection     Phase = "connection"
+	PhaseAuthentication Phase = "authentication"
+	PhaseOverall        Phase = "overall"
 )
 
 type sample struct {

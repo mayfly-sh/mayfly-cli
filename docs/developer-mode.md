@@ -8,7 +8,13 @@ profiler.
 mayfly --dev login github
 mayfly --dev whoami
 mayfly --dev auth status
+mayfly ssh --dev web-01
+mayfly cert --dev issue
 ```
+
+> `mayfly ssh` disables flag parsing for OpenSSH passthrough, so use the bare
+> `--dev` form (e.g. `mayfly ssh --dev web-01`); the timing table prints to
+> stderr before/after OpenSSH runs.
 
 Example:
 
@@ -44,6 +50,33 @@ Phases include the full authentication lifecycle: configuration load, provider
 discovery, OAuth start, device authorization, browser launch, polling, token
 exchange, credential storage, plus HTTP and JSON serialize/parse timings (the
 HTTP client also records DNS/TLS via httptrace in `--dev`).
+
+For SSH and certificate commands, the table also covers the certificate
+lifecycle and connection:
+
+```
+=== developer timing ===
+PHASE             DURATION   PERCENT  CALLS
+----------------  --------  --------  -----
+startup              2.0ms      0.5%      1
+configuration        800µs      0.2%      1
+cache_lookup         300µs      0.1%      1
+cert_request          85ms     21.0%      1
+cert_verify          1.2ms      0.3%      1
+connection           310ms     77.0%      1
+overall              402ms    100.0%      1
+GRADE: B  (total 402ms)
+```
+
+- **cache_lookup** — reading the certificate cache.
+- **cert_request** — requesting/signing a certificate from the server.
+- **cert_verify** — locally parsing + validating the certificate before use.
+- **ssh_startup** — resolving the system `ssh` binary and assembling its argv.
+- **connection** — the OpenSSH session itself (until it exits).
+- **authentication** — the OAuth login phase when auto-login is triggered.
+
+A reused certificate shows a fast `cache_lookup` + `cert_verify` and no
+`cert_request`.
 
 Developer mode is effectively free when disabled — recording calls reduce to a
 boolean check, so production paths pay no cost.

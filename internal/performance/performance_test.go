@@ -65,6 +65,19 @@ func TestTableShowsPercentAndGrade(t *testing.T) {
 	}
 }
 
+func TestSSHCertPhasesRender(t *testing.T) {
+	p := New(true)
+	for _, ph := range []Phase{PhaseCacheLookup, PhaseCertRequest, PhaseCertVerify, PhaseSSHStartup, PhaseConnection, PhaseAuthentication} {
+		_ = p.Measure(ph, func() error { return nil })
+	}
+	table := p.Table()
+	for _, want := range []string{"cache_lookup", "cert_request", "cert_verify", "ssh_startup", "connection", "authentication"} {
+		if !strings.Contains(table, want) {
+			t.Errorf("table missing phase %q:\n%s", want, table)
+		}
+	}
+}
+
 func TestGradeThresholds(t *testing.T) {
 	cases := map[string]string{
 		"A": grade(100_000_000),    // 100ms

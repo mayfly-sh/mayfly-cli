@@ -6,6 +6,7 @@ package ssh
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -93,7 +94,9 @@ type CertInfo struct {
 	ValidAfter      time.Time `json:"valid_after"`
 	ValidBefore     time.Time `json:"valid_before"`
 	SignatureFormat string    `json:"signature_format"`
+	KeyFingerprint  string    `json:"key_fingerprint"`
 	CAFingerprint   string    `json:"ca_fingerprint"`
+	CriticalOptions []string  `json:"critical_options"`
 	Extensions      []string  `json:"extensions"`
 }
 
@@ -114,10 +117,8 @@ func InspectCertificate(authorizedKey []byte) (*CertInfo, error) {
 		certType = "host"
 	}
 
-	exts := make([]string, 0, len(cert.Permissions.Extensions))
-	for k := range cert.Permissions.Extensions {
-		exts = append(exts, k)
-	}
+	exts := sortedKeys(cert.Permissions.Extensions)
+	crit := sortedKeys(cert.Permissions.CriticalOptions)
 
 	return &CertInfo{
 		Type:            certType,
@@ -127,9 +128,20 @@ func InspectCertificate(authorizedKey []byte) (*CertInfo, error) {
 		ValidAfter:      time.Unix(int64(cert.ValidAfter), 0).UTC(),
 		ValidBefore:     time.Unix(int64(cert.ValidBefore), 0).UTC(),
 		SignatureFormat: cert.Signature.Format,
+		KeyFingerprint:  cryptossh.FingerprintSHA256(cert.Key),
 		CAFingerprint:   cryptossh.FingerprintSHA256(cert.SignatureKey),
+		CriticalOptions: crit,
 		Extensions:      exts,
 	}, nil
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Algorithms summarizes the SSH algorithms this build supports, for diagnostics.

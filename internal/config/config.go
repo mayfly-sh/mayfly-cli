@@ -36,6 +36,13 @@ type Config struct {
 	CredentialBackend string `json:"credential_backend"`
 	RequestTimeoutSec int    `json:"request_timeout_seconds"`
 	Retries           int    `json:"retries"`
+
+	// SSH / certificate lifecycle (011C).
+	CertCachePath     string   `json:"cert_cache_path"`
+	RenewThresholdSec int      `json:"renew_threshold_seconds"`
+	CertLifetimeSec   int      `json:"cert_lifetime_seconds"`
+	DefaultSSHOptions []string `json:"default_ssh_options"`
+	PreferredUsername string   `json:"preferred_username"`
 }
 
 // Origins records the Source that supplied each field's final value, keyed by
@@ -45,13 +52,18 @@ type Origins map[string]Source
 // fileConfig is the on-disk representation. Pointer fields distinguish "unset"
 // from "set to zero value" so layering is precise.
 type fileConfig struct {
-	ServerURL         *string `json:"server_url"`
-	Provider          *string `json:"provider"`
-	LogLevel          *string `json:"log_level"`
-	LogFormat         *string `json:"log_format"`
-	CredentialBackend *string `json:"credential_backend"`
-	RequestTimeoutSec *int    `json:"request_timeout_seconds"`
-	Retries           *int    `json:"retries"`
+	ServerURL         *string   `json:"server_url"`
+	Provider          *string   `json:"provider"`
+	LogLevel          *string   `json:"log_level"`
+	LogFormat         *string   `json:"log_format"`
+	CredentialBackend *string   `json:"credential_backend"`
+	RequestTimeoutSec *int      `json:"request_timeout_seconds"`
+	Retries           *int      `json:"retries"`
+	CertCachePath     *string   `json:"cert_cache_path"`
+	RenewThresholdSec *int      `json:"renew_threshold_seconds"`
+	CertLifetimeSec   *int      `json:"cert_lifetime_seconds"`
+	DefaultSSHOptions *[]string `json:"default_ssh_options"`
+	PreferredUsername *string   `json:"preferred_username"`
 }
 
 // Defaults returns the baseline configuration.
@@ -64,7 +76,24 @@ func Defaults() Config {
 		CredentialBackend: "auto",
 		RequestTimeoutSec: 30,
 		Retries:           2,
+		// CertCachePath empty → resolved lazily to <user-config>/mayfly/certs.
+		CertCachePath:     "",
+		RenewThresholdSec: 60,
+		// CertLifetimeSec 0 → let the server apply its default/clamp (60–3600).
+		CertLifetimeSec:   0,
+		DefaultSSHOptions: nil,
+		PreferredUsername: "",
 	}
+}
+
+// DefaultCertCachePath returns the standard certificate cache directory, or ""
+// if the user config dir is undeterminable.
+func DefaultCertCachePath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "mayfly", "certs")
 }
 
 // SystemConfigPath is the machine-wide config file path.
@@ -107,7 +136,9 @@ func (l *Loader) Load() (Config, Origins, error) {
 		"server_url": SourceDefault, "provider": SourceDefault,
 		"log_level": SourceDefault, "log_format": SourceDefault,
 		"credential_backend": SourceDefault, "request_timeout_seconds": SourceDefault,
-		"retries": SourceDefault,
+		"retries": SourceDefault, "cert_cache_path": SourceDefault,
+		"renew_threshold_seconds": SourceDefault, "cert_lifetime_seconds": SourceDefault,
+		"default_ssh_options": SourceDefault, "preferred_username": SourceDefault,
 	}
 
 	if l.SystemPath != "" {
@@ -168,6 +199,21 @@ func mergeFile(cfg *Config, origins Origins, fc *fileConfig, src Source) {
 	if fc.Retries != nil {
 		cfg.Retries, origins["retries"] = *fc.Retries, src
 	}
+	if fc.CertCachePath != nil {
+		cfg.CertCachePath, origins["cert_cache_path"] = *fc.CertCachePath, src
+	}
+	if fc.RenewThresholdSec != nil {
+		cfg.RenewThresholdSec, origins["renew_threshold_seconds"] = *fc.RenewThresholdSec, src
+	}
+	if fc.CertLifetimeSec != nil {
+		cfg.CertLifetimeSec, origins["cert_lifetime_seconds"] = *fc.CertLifetimeSec, src
+	}
+	if fc.DefaultSSHOptions != nil {
+		cfg.DefaultSSHOptions, origins["default_ssh_options"] = *fc.DefaultSSHOptions, src
+	}
+	if fc.PreferredUsername != nil {
+		cfg.PreferredUsername, origins["preferred_username"] = *fc.PreferredUsername, src
+	}
 }
 
 func (l *Loader) mergeEnv(cfg *Config, origins Origins) {
@@ -200,6 +246,41 @@ func (l *Loader) mergeEnv(cfg *Config, origins Origins) {
 			cfg.Retries, origins["retries"] = n, SourceEnv
 		}
 	}
+	if v := get("MAYFLY_CERT_CACHE_PATH"); v != "" {
+		cfg.CertCachePath, origins["cert_cache_path"] = v, SourceEnv
+	}
+	if v := get("MAYFLY_RENEW_THRESHOLD"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			cfg.RenewThresholdSec, origins["renew_threshold_seconds"] = n, SourceEnv
+		}
+	}
+	if v := get("MAYFLY_CERT_LIFETIME"); v != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			cfg.CertLifetimeSec, origins["cert_lifetime_seconds"] = n, SourceEnv
+		}
+	}
+	if v := get("MAYFLY_SSH_OPTIONS"); v != "" {
+		cfg.DefaultSSHOptions, origins["default_ssh_options"] = splitSSHOptions(v), SourceEnv
+	}
+	if v := get("MAYFLY_PREFERRED_USERNAME"); v != "" {
+		cfg.PreferredUsername, origins["preferred_username"] = v, SourceEnv
+	}
+}
+
+// splitSSHOptions splits a newline- or comma-separated list of "-o"-style SSH
+// options, trimming blanks. Newlines take precedence so values may contain commas.
+func splitSSHOptions(v string) []string {
+	sep := ","
+	if strings.Contains(v, "\n") {
+		sep = "\n"
+	}
+	var out []string
+	for _, part := range strings.Split(v, sep) {
+		if s := strings.TrimSpace(part); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // FlagOverride is a single highest-precedence override sourced from a CLI flag.
@@ -212,6 +293,10 @@ type FlagOverride struct {
 	CredentialBackend *string
 	RequestTimeoutSec *int
 	Retries           *int
+	CertCachePath     *string
+	RenewThresholdSec *int
+	CertLifetimeSec   *int
+	PreferredUsername *string
 }
 
 // ApplyFlags applies flag overrides at the highest precedence.
@@ -236,5 +321,17 @@ func ApplyFlags(cfg *Config, origins Origins, o FlagOverride) {
 	}
 	if o.Retries != nil {
 		cfg.Retries, origins["retries"] = *o.Retries, SourceFlag
+	}
+	if o.CertCachePath != nil {
+		cfg.CertCachePath, origins["cert_cache_path"] = *o.CertCachePath, SourceFlag
+	}
+	if o.RenewThresholdSec != nil {
+		cfg.RenewThresholdSec, origins["renew_threshold_seconds"] = *o.RenewThresholdSec, SourceFlag
+	}
+	if o.CertLifetimeSec != nil {
+		cfg.CertLifetimeSec, origins["cert_lifetime_seconds"] = *o.CertLifetimeSec, SourceFlag
+	}
+	if o.PreferredUsername != nil {
+		cfg.PreferredUsername, origins["preferred_username"] = *o.PreferredUsername, SourceFlag
 	}
 }

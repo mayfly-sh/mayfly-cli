@@ -11,10 +11,13 @@ import (
 
 	"github.com/mayfly-ssh/mayfly-cli/internal/account"
 	"github.com/mayfly-ssh/mayfly-cli/internal/authflow"
+	"github.com/mayfly-ssh/mayfly-cli/internal/certcache"
+	"github.com/mayfly-ssh/mayfly-cli/internal/certs"
 	"github.com/mayfly-ssh/mayfly-cli/internal/clientcontext"
 	"github.com/mayfly-ssh/mayfly-cli/internal/credentials"
 	"github.com/mayfly-ssh/mayfly-cli/internal/oauth"
 	"github.com/mayfly-ssh/mayfly-cli/internal/profile"
+	"github.com/mayfly-ssh/mayfly-cli/internal/ssh"
 	"github.com/mayfly-ssh/mayfly-cli/internal/version"
 )
 
@@ -94,3 +97,30 @@ func OpenCredentialStore(b CredentialBackend) (CredentialStore, error) {
 
 // NewTokenStore wraps a credential store as an OAuth token store.
 func NewTokenStore(s CredentialStore) TokenStore { return oauth.NewTokenStore(s) }
+
+// SSH / certificate lifecycle public types (011C).
+type (
+	CertManager      = certs.Manager
+	CertEnsureResult = certs.Result
+	CertEnsureOption = certs.EnsureOptions
+	CertCache        = certcache.Cache
+	CertIdentity     = certcache.Identity
+	CertEntry        = certcache.Entry
+	CertInfo         = ssh.CertInfo
+	SSHOptions       = ssh.Options
+	SSHParsedArgs    = ssh.Parsed
+)
+
+// NewCertCache opens a certificate cache rooted at dir.
+func NewCertCache(root string) *CertCache { return certcache.New(root) }
+
+// NewCertManager returns a certificate lifecycle manager over a cache.
+func NewCertManager(c *CertCache) *CertManager { return certs.NewManager(c, nil) }
+
+// InspectCertificate parses an OpenSSH certificate (authorized_keys line).
+func InspectCertificate(authorizedKey []byte) (*CertInfo, error) {
+	return ssh.InspectCertificate(authorizedKey)
+}
+
+// ParseSSHArgs splits a `mayfly ssh` invocation into Mayfly flags and OpenSSH passthrough.
+func ParseSSHArgs(args []string) (*SSHParsedArgs, error) { return ssh.ParseArgs(args) }

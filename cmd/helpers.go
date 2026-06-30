@@ -5,10 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/mayfly-ssh/mayfly-cli/internal/account"
+	"github.com/mayfly-ssh/mayfly-cli/internal/certcache"
+	"github.com/mayfly-ssh/mayfly-cli/internal/certs"
 	"github.com/mayfly-ssh/mayfly-cli/internal/client"
+	"github.com/mayfly-ssh/mayfly-cli/internal/config"
 	"github.com/mayfly-ssh/mayfly-cli/internal/oauth"
 )
 
@@ -118,6 +123,43 @@ func (a *App) fetchServerInfo(ctx context.Context) (serverHealth, *client.Meta, 
 		return serverHealth{}, meta, err
 	}
 	return h, meta, nil
+}
+
+// certCacheRoot resolves the effective certificate cache directory.
+func (a *App) certCacheRoot() string {
+	if a.Config.CertCachePath != "" {
+		return a.Config.CertCachePath
+	}
+	if p := config.DefaultCertCachePath(); p != "" {
+		return p
+	}
+	return filepath.Join(os.TempDir(), "mayfly", "certs")
+}
+
+// certCache returns a cache rooted at the effective cache directory.
+func (a *App) certCache() *certcache.Cache {
+	return certcache.New(a.certCacheRoot())
+}
+
+// certManager returns a certificate lifecycle manager over the cache.
+func (a *App) certManager() *certs.Manager {
+	return certs.NewManager(a.certCache(), a.Profiler)
+}
+
+// identityFor maps an account to its cache identity (profile-scoped).
+func (a *App) identityFor(acct account.Account) certcache.Identity {
+	return certcache.Identity{
+		Profile:  a.ProfileName,
+		Provider: acct.Provider,
+		Subject:  acct.Subject,
+		Server:   a.Config.ServerURL,
+	}
+}
+
+// renewThreshold is the remaining-lifetime below which a cached certificate is
+// reissued rather than reused.
+func (a *App) renewThreshold() time.Duration {
+	return time.Duration(a.Config.RenewThresholdSec) * time.Second
 }
 
 // printJSON writes v as indented JSON.
