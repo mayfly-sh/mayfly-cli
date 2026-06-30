@@ -156,6 +156,8 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newStatusCommand())
 	root.AddCommand(newMetricsCommand())
 	root.AddCommand(newDoctorCommand())
+	// Fleet rollout console (013D).
+	root.AddCommand(newRolloutCommand())
 	return root
 }
 

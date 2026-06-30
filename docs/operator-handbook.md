@@ -31,9 +31,23 @@ mayfly ssh web-01            # auto issue cert + connect (see ssh.md / certifica
 |---|---|---|
 | List / inspect machines | `mayfly machine list` / `show <id>` | [`machines.md`](machines.md) |
 | Approve / disable / revoke a machine | `mayfly machine approve|disable|revoke <id>` | [`machines.md`](machines.md) |
-| Watch rollout convergence | `mayfly machine status` / `ca rollout --watch` | [`machines.md`](machines.md), [`rotation.md`](rotation.md) |
+| Watch rollout convergence | `mayfly rollout watch` | [`rollout.md`](rollout.md) |
 | Manage SSH CAs | `mayfly ca list|create|import|enable|disable|retire` | [`ca.md`](ca.md) |
 | Rotate the CA | `mayfly ca rotate` (guided) | [`rotation.md`](rotation.md) |
+
+## Manage a rollout
+
+After rotating the CA, drive convergence from the rollout console:
+
+```bash
+mayfly rollout watch                # live progress bar, %, ETA, breakdown
+mayfly rollout health               # Healthy | Degraded | Blocked | Failed
+mayfly rollout explain              # why it's incomplete, by category
+mayfly rollout stuck                # who's stuck + concrete remediation
+mayfly rollout timeline             # recent apply/rollback/verify events
+```
+
+See [`rollout.md`](rollout.md).
 
 ## Investigate: "what happened?"
 
@@ -85,4 +99,4 @@ generation, helper, and agent convergence. See [`diagnostics.md`](diagnostics.md
 
 - Server architecture & APIs: `../../mayfly-server/README.md`
 - CLI architecture: `../../.cursor/outputs/analysis/architecture/cli.md`
-- Decisions: `ADR-0018`–`ADR-0024`
+- Decisions: `ADR-0018`–`ADR-0025`

@@ -2,20 +2,22 @@
 
 The Mayfly zero-trust SSH access CLI (Go).
 
-> **Status (Milestone 013C).** The CLI is now the **operational console** and the
-> **primary operator interface**: **authentication** (`login`/`logout`/`whoami`/
-> `auth …`, 011B), **SSH/cert** (`ssh`, `cert …`, 011C), **machine administration**
-> (`machine …`, 013A), **CA administration** (`ca …`, 013B), and **operations**
-> (`audit`/`events`/`history`/`health`/`status`/`metrics`/`doctor`, 013C) are all
-> implemented on the 011A SDK, with multi-account + profiles, `table`/`wide`/
-> `json`/`yaml` output, `--watch`, `--follow`, filtering, guided CA rotation,
-> PASS/WARN/FAIL diagnostics, and developer-mode timing. An operator can
-> investigate and troubleshoot the whole platform without calling the REST API.
-> See `docs/authentication.md`, `docs/configuration.md`, `docs/ssh.md`,
+> **Status (Milestone 013D).** The CLI is now the **operational + rollout
+> console** and the **primary operator interface**: **authentication**
+> (`login`/`logout`/`whoami`/`auth …`, 011B), **SSH/cert** (`ssh`, `cert …`,
+> 011C), **machine administration** (`machine …`, 013A), **CA administration**
+> (`ca …`, 013B), **operations** (`audit`/`events`/`history`/`health`/`status`/
+> `metrics`/`doctor`, 013C), and **fleet rollout management** (`rollout …`, 013D)
+> are all implemented on the 011A SDK, with multi-account + profiles, `table`/
+> `wide`/`json`/`yaml` output, `--watch`, `--follow`, filtering, guided CA
+> rotation, PASS/WARN/FAIL diagnostics, rollout health scoring + ETA, and
+> developer-mode timing. An operator can observe, investigate, troubleshoot, and
+> manage the whole platform without calling the REST API. See
+> `docs/authentication.md`, `docs/configuration.md`, `docs/ssh.md`,
 > `docs/certificates.md`, `docs/machines.md`, `docs/ca.md`, `docs/rotation.md`,
-> `docs/audit.md`, `docs/diagnostics.md`, `docs/operator-handbook.md`,
-> `docs/developer-mode.md`,
-> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`–`ADR-0024`.
+> `docs/audit.md`, `docs/diagnostics.md`, `docs/rollout.md`,
+> `docs/operator-handbook.md`, `docs/developer-mode.md`,
+> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`–`ADR-0025`.
 
 ## Build & test
 
@@ -115,6 +117,15 @@ go build -ldflags "\
 ./mayfly history failures                  # curated reports: certificates|logins|machines|ca|bundles|failures
 ./mayfly metrics -o json                   # API request statistics + timings
 
+# Fleet rollout console — observe & manage CA-bundle rollouts (no manual REST)
+./mayfly rollout watch                     # live dashboard: progress bar, %, ETA, breakdown
+./mayfly rollout health                    # Healthy | Degraded | Blocked | Failed + reasons
+./mayfly rollout explain                   # why the rollout is incomplete, by category
+./mayfly rollout stuck                     # machines that can't progress + remediation
+./mayfly rollout machines --state lagging  # per-machine rollout state (filterable)
+./mayfly rollout timeline --limit 100      # recent apply/rollback/verify events
+./mayfly rollout history                   # generation adoption over time
+
 # Profiles, JSON, developer timing
 ./mayfly --profile staging whoami --json
 ./mayfly --dev login github
@@ -132,6 +143,7 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 [`docs/machines.md`](docs/machines.md),
 [`docs/ca.md`](docs/ca.md), [`docs/rotation.md`](docs/rotation.md),
 [`docs/audit.md`](docs/audit.md), [`docs/diagnostics.md`](docs/diagnostics.md),
+[`docs/rollout.md`](docs/rollout.md),
 [`docs/operator-handbook.md`](docs/operator-handbook.md),
 [`docs/developer-mode.md`](docs/developer-mode.md).
 
@@ -155,9 +167,10 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 | `internal/machineadmin` | machine-administration client types (mirror server DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml` via `tabwriter` + `yaml.v3`): machine + fleet summaries |
 | `internal/caadmin` | CA-administration client types (mirror server `CaView`/`CaStats`/`RotationResult` DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml`): CA list/detail, stats, public bundle, rollout, guided rotation |
 | `internal/opsadmin` | operational-console client types (mirror server audit/health/status/metrics + doctor DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml`): audit entries/pages, health, status, API metrics, doctor report |
+| `internal/rolloutadmin` | rollout-console client types (mirror server `/admin/rollout*` DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml`): rollout status (progress bar + ETA + breakdown), generations, per-machine state, stuck machines, health, explain, timeline, history |
 | `internal/config` | layered config: flags > profile > env > user > system > defaults, with value origins |
 | `internal/platform` / `hardware` / `machine` / `version` / `logging` | environment & identity helpers |
-| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `machine …`, `ca …`, `audit`/`events`/`history`/`health`/`status`/`metrics`/`doctor`, `version`, `diagnostics` |
+| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `machine …`, `ca …`, `audit`/`events`/`history`/`health`/`status`/`metrics`/`doctor`, `rollout …`, `version`, `diagnostics` |
 | `pkg/mayfly` | stable public API facade |
 
 ## Configuration precedence
