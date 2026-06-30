@@ -2,17 +2,20 @@
 
 The Mayfly zero-trust SSH access CLI (Go).
 
-> **Status (Milestone 013B).** The CLI is now the **primary operator interface**:
-> the **authentication** (`login`/`logout`/`whoami`/`auth …`, 011B), **SSH/cert**
-> (`ssh`, `cert …`, 011C), **machine administration** (`machine …`, 013A), and
-> **CA administration** (`ca …`, 013B) experiences are all implemented on the 011A
-> SDK, with multi-account + profiles, `table`/`wide`/`json`/`yaml` output,
-> `--watch`, filtering, guided CA rotation, and developer-mode timing. No operator
-> needs to call the REST API by hand.
+> **Status (Milestone 013C).** The CLI is now the **operational console** and the
+> **primary operator interface**: **authentication** (`login`/`logout`/`whoami`/
+> `auth …`, 011B), **SSH/cert** (`ssh`, `cert …`, 011C), **machine administration**
+> (`machine …`, 013A), **CA administration** (`ca …`, 013B), and **operations**
+> (`audit`/`events`/`history`/`health`/`status`/`metrics`/`doctor`, 013C) are all
+> implemented on the 011A SDK, with multi-account + profiles, `table`/`wide`/
+> `json`/`yaml` output, `--watch`, `--follow`, filtering, guided CA rotation,
+> PASS/WARN/FAIL diagnostics, and developer-mode timing. An operator can
+> investigate and troubleshoot the whole platform without calling the REST API.
 > See `docs/authentication.md`, `docs/configuration.md`, `docs/ssh.md`,
 > `docs/certificates.md`, `docs/machines.md`, `docs/ca.md`, `docs/rotation.md`,
+> `docs/audit.md`, `docs/diagnostics.md`, `docs/operator-handbook.md`,
 > `docs/developer-mode.md`,
-> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`–`ADR-0023`.
+> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`–`ADR-0024`.
 
 ## Build & test
 
@@ -101,6 +104,17 @@ go build -ldflags "\
 ./mayfly ca public-key <ca-id>             # raw OpenSSH key line (pipe-friendly)
 ./mayfly ca fingerprint                    # bundle fingerprint (or a CA's with an id)
 
+# Operational console — investigate & troubleshoot the fleet (no manual REST)
+./mayfly health                            # one-glance fleet health (status, machines, rollout, activity)
+./mayfly status -o yaml                    # cluster/system status (CAs, bundle, API summary)
+./mayfly doctor                            # PASS/WARN/FAIL diagnostics + guidance (alias: diagnose)
+./mayfly audit --machine web-01 --since 24h        # search the tamper-evident audit log
+./mayfly audit --event-type certificate. --result failure --tail 50
+./mayfly audit --follow                    # live tail of new events
+./mayfly events ca --follow                # category preset over audit
+./mayfly history failures                  # curated reports: certificates|logins|machines|ca|bundles|failures
+./mayfly metrics -o json                   # API request statistics + timings
+
 # Profiles, JSON, developer timing
 ./mayfly --profile staging whoami --json
 ./mayfly --dev login github
@@ -117,6 +131,8 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 [`docs/ssh.md`](docs/ssh.md), [`docs/certificates.md`](docs/certificates.md),
 [`docs/machines.md`](docs/machines.md),
 [`docs/ca.md`](docs/ca.md), [`docs/rotation.md`](docs/rotation.md),
+[`docs/audit.md`](docs/audit.md), [`docs/diagnostics.md`](docs/diagnostics.md),
+[`docs/operator-handbook.md`](docs/operator-handbook.md),
 [`docs/developer-mode.md`](docs/developer-mode.md).
 
 ## Architecture (summary)
@@ -138,9 +154,10 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 | `internal/certs` | certificate lifecycle: issue + reuse/renew/reissue decision (never serves an expired cert) + local inspect |
 | `internal/machineadmin` | machine-administration client types (mirror server DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml` via `tabwriter` + `yaml.v3`): machine + fleet summaries |
 | `internal/caadmin` | CA-administration client types (mirror server `CaView`/`CaStats`/`RotationResult` DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml`): CA list/detail, stats, public bundle, rollout, guided rotation |
+| `internal/opsadmin` | operational-console client types (mirror server audit/health/status/metrics + doctor DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml`): audit entries/pages, health, status, API metrics, doctor report |
 | `internal/config` | layered config: flags > profile > env > user > system > defaults, with value origins |
 | `internal/platform` / `hardware` / `machine` / `version` / `logging` | environment & identity helpers |
-| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `machine …`, `ca …`, `version`, `diagnostics` |
+| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `machine …`, `ca …`, `audit`/`events`/`history`/`health`/`status`/`metrics`/`doctor`, `version`, `diagnostics` |
 | `pkg/mayfly` | stable public API facade |
 
 ## Configuration precedence

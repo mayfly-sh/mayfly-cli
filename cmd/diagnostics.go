@@ -14,9 +14,8 @@ import (
 func newDiagnosticsCommand() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
-		Use:     "diagnostics",
-		Aliases: []string{"doctor"},
-		Short:   "Show resolved client context, configuration, and capabilities",
+		Use:   "diagnostics",
+		Short: "Show resolved client context, configuration, and capabilities",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			app := FromContext(cmd.Context())
 			if app == nil {

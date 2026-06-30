@@ -148,6 +148,14 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newSSHCommand())
 	root.AddCommand(newMachineCommand())
 	root.AddCommand(newCACommand())
+	// Operational console (013C).
+	root.AddCommand(newAuditCommand())
+	root.AddCommand(newEventsCommand())
+	root.AddCommand(newHistoryCommand())
+	root.AddCommand(newHealthCommand())
+	root.AddCommand(newStatusCommand())
+	root.AddCommand(newMetricsCommand())
+	root.AddCommand(newDoctorCommand())
 	return root
 }
 

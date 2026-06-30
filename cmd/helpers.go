@@ -49,6 +49,20 @@ func (a *App) apiClient(ts client.TokenSource) (*client.Client, error) {
 	return client.New(a.Config.ServerURL, a.Context, opts...)
 }
 
+// adminClient builds an authenticated API client for the active account, used by
+// the admin/operational endpoints (deny-by-default authorized server-side).
+func (a *App) adminClient() (*client.Client, error) {
+	acct, err := a.requireActiveAccount()
+	if err != nil {
+		return nil, err
+	}
+	provider, err := a.provider(acct.Provider)
+	if err != nil {
+		return nil, err
+	}
+	return a.apiClient(a.activeTokenSource(acct, provider))
+}
+
 // loadToken returns the stored token for an account, refreshing it in place when
 // it is expired and the provider supports refresh. The refreshed token is
 // persisted. Never returns or logs secret material to the caller's output.
