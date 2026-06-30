@@ -13,27 +13,34 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/mayfly-ssh/mayfly-cli/internal/account"
 	"github.com/mayfly-ssh/mayfly-cli/internal/clientcontext"
 	"github.com/mayfly-ssh/mayfly-cli/internal/config"
 	"github.com/mayfly-ssh/mayfly-cli/internal/credentials"
 	"github.com/mayfly-ssh/mayfly-cli/internal/logging"
 	"github.com/mayfly-ssh/mayfly-cli/internal/oauth"
-	"github.com/mayfly-ssh/mayfly-cli/internal/oauth/providers/github"
-	"github.com/mayfly-ssh/mayfly-cli/internal/oauth/providers/keycloak"
+	"github.com/mayfly-ssh/mayfly-cli/internal/oauth/providers/mayflyserver"
 	"github.com/mayfly-ssh/mayfly-cli/internal/performance"
+	"github.com/mayfly-ssh/mayfly-cli/internal/profile"
 	"github.com/mayfly-ssh/mayfly-cli/internal/version"
 )
 
 // App is the fully-assembled CLI runtime shared by every command.
 type App struct {
-	Config    config.Config
-	Origins   config.Origins
-	Context   *clientcontext.ClientContext
-	Logger    *slog.Logger
-	Profiler  *performance.Profiler
-	Providers *oauth.Registry
-	Creds     credentials.Store
+	Config      config.Config
+	Origins     config.Origins
+	Context     *clientcontext.ClientContext
+	Logger      *slog.Logger
+	Profiler    *performance.Profiler
+	Providers   *oauth.Registry
+	Creds       credentials.Store
+	Accounts    *account.Store
+	Profiles    *profile.Store
+	ProfileName string
 }
+
+// ProviderID returns the effective default provider id.
+func (a *App) ProviderID() string { return a.Config.Provider }
 
 type appKey struct{}
 
@@ -49,6 +56,7 @@ type globalFlags struct {
 	verbose      int
 	server       string
 	provider     string
+	profile      string
 	logLevel     string
 	logFormat    string
 	credBackend  string
@@ -100,6 +108,7 @@ func NewRootCommand() *cobra.Command {
 	flags.CountVarP(&gf.verbose, "verbose", "v", "increase log verbosity (-v, -vv, -vvv)")
 	flags.StringVar(&gf.server, "server", "", "Mayfly server URL (overrides config)")
 	flags.StringVar(&gf.provider, "provider", "", "OAuth provider id (e.g. github, keycloak)")
+	flags.StringVar(&gf.profile, "profile", "", "configuration profile to use")
 	flags.StringVar(&gf.logLevel, "log-level", "", "log level: debug|info|warn|error")
 	flags.StringVar(&gf.logFormat, "log-format", "", "log format: text|json")
 	flags.StringVar(&gf.credBackend, "credential-backend", "", "credential backend: auto|keyring|file")
@@ -108,6 +117,10 @@ func NewRootCommand() *cobra.Command {
 
 	root.AddCommand(newVersionCommand())
 	root.AddCommand(newDiagnosticsCommand())
+	root.AddCommand(newLoginCommand())
+	root.AddCommand(newLogoutCommand())
+	root.AddCommand(newWhoamiCommand())
+	root.AddCommand(newAuthCommand())
 	return root
 }
 
@@ -118,13 +131,29 @@ func buildApp(cmd *cobra.Command, gf *globalFlags) (*App, error) {
 	stopStartup := prof.Start(performance.PhaseStartup)
 	defer stopStartup()
 
+	profiles := profile.NewStore(profile.DefaultPath())
+
 	var cfg config.Config
 	var origins config.Origins
+	var profileName string
 	if err := prof.Measure(performance.PhaseConfig, func() error {
 		loader := config.NewLoader()
 		c, o, err := loader.Load()
 		if err != nil {
 			return err
+		}
+		if err := profiles.Load(); err != nil {
+			return err
+		}
+		profileName = resolveProfileName(gf, profiles)
+		// Profile overlay sits below flags but above env/config: a selected
+		// profile's server/provider win unless an explicit flag overrides them.
+		res := profiles.Resolve(profileName, c.ServerURL, c.Provider)
+		if res.ServerFromProfile {
+			c.ServerURL, o["server_url"] = res.Server, config.SourceProfile
+		}
+		if res.ProviderFromProfile {
+			c.Provider, o["provider"] = res.Provider, config.SourceProfile
 		}
 		config.ApplyFlags(&c, o, flagOverrides(cmd, gf))
 		cfg, origins = c, o
@@ -153,20 +182,44 @@ func buildApp(cmd *cobra.Command, gf *globalFlags) (*App, error) {
 
 	cc := clientcontext.New(store.Name())
 
-	registry, err := buildRegistry(cfg)
-	if err != nil {
+	var registry *oauth.Registry
+	if err := prof.Measure(performance.PhaseProviderDiscovery, func() error {
+		r, e := buildRegistry(cfg, cc, prof)
+		registry = r
+		return e
+	}); err != nil {
+		return nil, err
+	}
+
+	accounts := account.NewStore(account.DefaultPath())
+	if err := accounts.Load(); err != nil {
 		return nil, err
 	}
 
 	return &App{
-		Config:    cfg,
-		Origins:   origins,
-		Context:   cc,
-		Logger:    logger,
-		Profiler:  prof,
-		Providers: registry,
-		Creds:     store,
+		Config:      cfg,
+		Origins:     origins,
+		Context:     cc,
+		Logger:      logger,
+		Profiler:    prof,
+		Providers:   registry,
+		Creds:       store,
+		Accounts:    accounts,
+		Profiles:    profiles,
+		ProfileName: profileName,
 	}, nil
+}
+
+// resolveProfileName picks the active profile: --profile flag, else
+// MAYFLY_PROFILE, else the configured default (or "default").
+func resolveProfileName(gf *globalFlags, profiles *profile.Store) string {
+	if gf.profile != "" {
+		return gf.profile
+	}
+	if v := os.Getenv("MAYFLY_PROFILE"); v != "" {
+		return v
+	}
+	return profiles.DefaultProfile()
 }
 
 // flagOverrides converts only the flags the user actually set into overrides,
@@ -198,36 +251,36 @@ func flagOverrides(cmd *cobra.Command, gf *globalFlags) config.FlagOverride {
 	return o
 }
 
-// buildRegistry registers the providers compiled into this build. Adding a
-// future provider is one Register call here plus its implementation package —
-// no other code changes.
-func buildRegistry(cfg config.Config) (*oauth.Registry, error) {
+// buildRegistry registers the providers used for login. Login is brokered
+// through the mayfly-server (the secure, canonical path: OAuth client secrets
+// stay server-side and the server enforces authorization + audit), so each
+// provider is a server-backed implementation distinguished only by the provider
+// id the server resolves. Adding a future provider is one Register call here.
+func buildRegistry(cfg config.Config, cc *clientcontext.ClientContext, prof *performance.Profiler) (*oauth.Registry, error) {
 	reg := oauth.NewRegistry()
+	timeout := time.Duration(cfg.RequestTimeoutSec) * time.Second
 
-	gh := github.New(github.Config{
-		ClientID: os.Getenv("MAYFLY_GITHUB_CLIENT_ID"),
-		Scopes:   envOr("MAYFLY_GITHUB_SCOPES", "read:user user:email"),
-	}, nil)
-	if err := reg.Register(gh); err != nil {
-		return nil, err
+	specs := []struct {
+		id, name string
+		kind     oauth.Kind
+	}{
+		{"github", "GitHub", oauth.KindOAuth2Device},
+		{"keycloak", "Keycloak", oauth.KindOIDCDevice},
 	}
-
-	kc := keycloak.New(keycloak.Config{
-		IssuerURL:    os.Getenv("MAYFLY_KEYCLOAK_ISSUER"),
-		ClientID:     os.Getenv("MAYFLY_KEYCLOAK_CLIENT_ID"),
-		ClientSecret: os.Getenv("MAYFLY_KEYCLOAK_CLIENT_SECRET"),
-		Scopes:       os.Getenv("MAYFLY_KEYCLOAK_SCOPES"),
-	}, nil)
-	if err := reg.Register(kc); err != nil {
-		return nil, err
+	for _, s := range specs {
+		p := mayflyserver.New(mayflyserver.Config{
+			ID:          s.id,
+			DisplayName: s.name,
+			Kind:        s.kind,
+			Server:      cfg.ServerURL,
+			Context:     cc,
+			Profiler:    prof,
+			Timeout:     timeout,
+			Retries:     cfg.Retries,
+		})
+		if err := reg.Register(p); err != nil {
+			return nil, err
+		}
 	}
-
 	return reg, nil
-}
-
-func envOr(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
 }

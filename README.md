@@ -2,12 +2,12 @@
 
 The Mayfly zero-trust SSH access CLI (Go).
 
-> **Milestone 011A — foundation only.** This repository currently provides the
-> reusable **client SDK** that every future command will share (OAuth provider
-> framework, client context, secure credential storage, HTTP client, developer
-> mode, SSH diagnostics, layered configuration). The user-facing `login` / `ssh`
-> / `cert` commands are added in later milestones. See
-> `../.cursor/outputs/analysis/architecture/cli.md` and `ADR-0018`.
+> **Status (Milestone 011B).** The full **authentication experience** is
+> implemented on the 011A SDK: `login` / `logout` / `whoami` / `auth …` /
+> `version`, multi-account + profiles, and developer-mode timing. Login is
+> brokered through the mayfly-server (ADR-0019). SSH commands come next.
+> See `docs/authentication.md`, `docs/configuration.md`, `docs/developer-mode.md`,
+> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`/`ADR-0019`.
 
 ## Build & test
 
@@ -30,31 +30,61 @@ go build -ldflags "\
   -o mayfly .
 ```
 
-## Try the foundation
+## Usage
 
 ```bash
+# Authenticate (server-brokered device flow)
+./mayfly login                 # default provider
+./mayfly login github          # or: keycloak
+./mayfly login --no-browser    # print URL + code instead of opening a browser
+
+# Identity & status
+./mayfly whoami                # add --json for machine-readable output
+./mayfly auth status
+
+# Providers & accounts
+./mayfly auth providers
+./mayfly auth accounts                  # active marked with *
+./mayfly auth use github/vasugarg       # switch active account
+./mayfly auth rename github/vasugarg work
+./mayfly auth remove keycloak/vasu
+./mayfly logout                         # or: logout --all
+
+# Profiles, JSON, developer timing — available on every auth command
+./mayfly --profile staging whoami --json
+./mayfly --dev login github
+
+# Foundation utilities
 ./mayfly version --json
-./mayfly diagnostics            # shows client context, hardware caps, providers, config + origins
-./mayfly --dev diagnostics      # also prints a developer timing table
+./mayfly diagnostics            # client context, hardware caps, providers, config + origins
 ```
+
+Full guides: [`docs/authentication.md`](docs/authentication.md),
+[`docs/configuration.md`](docs/configuration.md),
+[`docs/developer-mode.md`](docs/developer-mode.md).
 
 ## Architecture (summary)
 
 | Package | Responsibility |
 |---|---|
-| `internal/oauth` (+ `providers/github`, `providers/keycloak`) | provider-agnostic auth: `Provider`, `Registry`, `Session`, `Identity`, `TokenStore` |
+| `internal/oauth` (+ `providers/mayflyserver`, `providers/github`, `providers/keycloak`) | provider-agnostic auth: `Provider`, `Registry`, `Session`, `Identity`, `TokenStore`, capabilities. `mayflyserver` brokers login through the server (default); the IdP-direct providers remain as SDK alternatives |
+| `internal/authflow` | interactive device-flow orchestration: render, browser launch + manual fallback, polling, cancellation, retry, persist |
+| `internal/account` | multi-account index (provider/username/email/server/timestamps — no secrets); active selection per profile |
+| `internal/profile` | named server+provider profiles + resolution |
 | `internal/credentials` | `Store` abstraction: OS keystore (keychain/secret-service) + AES-256-GCM encrypted-file fallback |
 | `internal/clientcontext` | privacy-first per-invocation metadata + canonical `X-Mayfly-*` headers + session/request ids |
 | `internal/client` | reusable HTTP client: auth + context injection, timeouts, retries, structured errors, `--dev` tracing |
-| `internal/performance` | `--dev` profiler + timing table |
+| `internal/browser` | best-effort default-browser launcher |
+| `internal/performance` | `--dev` profiler + timing table (duration / percent / grade) |
 | `internal/ssh` | SSH diagnostics primitives (verbosity, option passthrough, cert/algorithm inspection) — no commands |
-| `internal/config` | layered config: flags > env > user > system > defaults, with value origins |
+| `internal/config` | layered config: flags > profile > env > user > system > defaults, with value origins |
 | `internal/platform` / `hardware` / `machine` / `version` / `logging` | environment & identity helpers |
+| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `version`, `diagnostics` |
 | `pkg/mayfly` | stable public API facade |
 
 ## Configuration precedence
 
-`CLI flags` > `environment (MAYFLY_*)` > user config > system config > defaults.
+`CLI flags` > selected `--profile` > `environment (MAYFLY_*)` > user config > system config > defaults.
 
 - User config: `${XDG_CONFIG_HOME:-~/.config}/mayfly/config.json`
 - System config: `/etc/mayfly/config.json`

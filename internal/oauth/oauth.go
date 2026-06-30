@@ -75,10 +75,14 @@ const (
 	PollDenied   PollState = "denied"
 )
 
-// PollResult carries the poll state and, when approved, the token.
+// PollResult carries the poll state and, when approved, the token and
+// (optionally) the resolved identity. Providers that can return the identity
+// alongside the token (e.g. the server-brokered flow) set Identity to spare the
+// caller a separate identity lookup.
 type PollResult struct {
-	State PollState
-	Token *Token
+	State    PollState
+	Token    *Token
+	Identity *Identity
 }
 
 // Provider is the single interface every identity provider implements.
@@ -162,4 +166,53 @@ func (s *Session) Interval() time.Duration {
 		return 5 * time.Second
 	}
 	return time.Duration(s.Authorization.Interval) * time.Second
+}
+
+// RefreshableProvider is an OPTIONAL capability: providers that issue refresh
+// tokens implement it so the CLI can renew access without a new device flow.
+// Providers without refresh (e.g. GitHub device flow) simply do not implement
+// it. This is additive to the 011A Provider abstraction — callers type-assert.
+type RefreshableProvider interface {
+	Provider
+	// Refresh exchanges a refresh token for a fresh Token.
+	Refresh(ctx context.Context, refreshToken string) (*Token, error)
+}
+
+// Configurable is an OPTIONAL capability: providers report whether they have the
+// configuration required to be usable (e.g. a client id / issuer). Used by
+// `auth providers` discovery.
+type Configurable interface {
+	// Configured reports whether the provider has its required settings.
+	Configured() bool
+}
+
+// Capabilities describes what a provider supports, for `auth providers`.
+type Capabilities struct {
+	DeviceFlow    bool `json:"device_flow"`
+	BrowserFlow   bool `json:"browser_flow"`
+	Refresh       bool `json:"refresh"`
+	OIDCDiscovery bool `json:"oidc_discovery"`
+}
+
+// CapabilitiesOf derives a provider's capabilities from the interfaces it
+// implements and its metadata, so capability reporting needs no per-provider
+// boilerplate. BrowserFlow is a declared future extension point (false today).
+func CapabilitiesOf(p Provider) Capabilities {
+	caps := Capabilities{DeviceFlow: true}
+	if _, ok := p.(RefreshableProvider); ok {
+		caps.Refresh = true
+	}
+	if p.Metadata().Kind == KindOIDCDevice {
+		caps.OIDCDiscovery = true
+	}
+	return caps
+}
+
+// IsConfigured reports whether a provider is configured, defaulting to true for
+// providers that do not implement Configurable.
+func IsConfigured(p Provider) bool {
+	if c, ok := p.(Configurable); ok {
+		return c.Configured()
+	}
+	return true
 }

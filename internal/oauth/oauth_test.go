@@ -59,6 +59,45 @@ func TestSessionIntervalDefault(t *testing.T) {
 	}
 }
 
+type refreshableStub struct {
+	stubProvider
+	configured bool
+}
+
+func (r refreshableStub) Metadata() Metadata {
+	return Metadata{ID: "kc", DisplayName: "kc", Kind: KindOIDCDevice}
+}
+func (r refreshableStub) Refresh(context.Context, string) (*Token, error) {
+	return &Token{AccessToken: "new"}, nil
+}
+func (r refreshableStub) Configured() bool { return r.configured }
+
+func TestCapabilitiesOf(t *testing.T) {
+	// Plain OAuth2 device provider: no refresh, no OIDC discovery.
+	c := CapabilitiesOf(stubProvider{id: "github"})
+	if !c.DeviceFlow || c.Refresh || c.OIDCDiscovery || c.BrowserFlow {
+		t.Fatalf("github caps = %+v", c)
+	}
+	// OIDC + refreshable provider.
+	c = CapabilitiesOf(refreshableStub{})
+	if !c.DeviceFlow || !c.Refresh || !c.OIDCDiscovery {
+		t.Fatalf("keycloak caps = %+v", c)
+	}
+}
+
+func TestIsConfigured(t *testing.T) {
+	// Providers without Configurable default to configured.
+	if !IsConfigured(stubProvider{id: "github"}) {
+		t.Fatal("default should be configured")
+	}
+	if IsConfigured(refreshableStub{configured: false}) {
+		t.Fatal("unconfigured provider should report false")
+	}
+	if !IsConfigured(refreshableStub{configured: true}) {
+		t.Fatal("configured provider should report true")
+	}
+}
+
 func TestTokenExpired(t *testing.T) {
 	if (&Token{}).Expired() {
 		t.Error("zero expiry should be treated as not expired")

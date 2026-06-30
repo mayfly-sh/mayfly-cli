@@ -53,6 +53,11 @@ func (p *Provider) Metadata() oauth.Metadata {
 	return oauth.Metadata{ID: "github", DisplayName: "GitHub", Kind: oauth.KindOAuth2Device}
 }
 
+// Configured reports whether a client id is set (required for the device flow).
+func (p *Provider) Configured() bool {
+	return strings.TrimSpace(p.cfg.ClientID) != ""
+}
+
 // StartDeviceAuthorization begins the device flow.
 func (p *Provider) StartDeviceAuthorization(ctx context.Context) (*oauth.DeviceAuthorization, error) {
 	form := url.Values{}

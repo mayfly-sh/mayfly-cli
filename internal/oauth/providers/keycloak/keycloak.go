@@ -68,6 +68,60 @@ func (p *Provider) Metadata() oauth.Metadata {
 	return oauth.Metadata{ID: "keycloak", DisplayName: "Keycloak", Kind: oauth.KindOIDCDevice}
 }
 
+// Configured reports whether the issuer and client id are set.
+func (p *Provider) Configured() bool {
+	return strings.TrimSpace(p.cfg.IssuerURL) != "" && strings.TrimSpace(p.cfg.ClientID) != ""
+}
+
+// Refresh exchanges a refresh token for a fresh token set (OIDC refresh_token
+// grant). Implements oauth.RefreshableProvider.
+func (p *Provider) Refresh(ctx context.Context, refreshToken string) (*oauth.Token, error) {
+	form := url.Values{}
+	form.Set("client_id", p.cfg.ClientID)
+	form.Set("grant_type", "refresh_token")
+	form.Set("refresh_token", refreshToken)
+	if p.cfg.ClientSecret != "" {
+		form.Set("client_secret", p.cfg.ClientSecret)
+	}
+
+	var body struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		IDToken      string `json:"id_token"`
+		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
+		ExpiresIn    int    `json:"expires_in"`
+		Error        string `json:"error"`
+	}
+	if err := p.postFormAllow(ctx, p.cfg.TokenEndpoint, form, &body, http.StatusOK, http.StatusBadRequest); err != nil {
+		return nil, err
+	}
+	if body.AccessToken == "" {
+		if body.Error != "" {
+			return nil, fmt.Errorf("keycloak: refresh failed: %s", body.Error)
+		}
+		return nil, fmt.Errorf("keycloak: refresh returned no access token")
+	}
+
+	var expiry time.Time
+	if body.ExpiresIn > 0 {
+		expiry = time.Now().Add(time.Duration(body.ExpiresIn) * time.Second)
+	}
+	// Keycloak may rotate the refresh token; keep the new one when provided.
+	newRefresh := body.RefreshToken
+	if newRefresh == "" {
+		newRefresh = refreshToken
+	}
+	return &oauth.Token{
+		AccessToken:  body.AccessToken,
+		RefreshToken: newRefresh,
+		IDToken:      body.IDToken,
+		TokenType:    body.TokenType,
+		Scope:        body.Scope,
+		Expiry:       expiry,
+	}, nil
+}
+
 // StartDeviceAuthorization begins the OIDC device flow.
 func (p *Provider) StartDeviceAuthorization(ctx context.Context) (*oauth.DeviceAuthorization, error) {
 	form := url.Values{}

@@ -87,42 +87,68 @@ func New(serverURL string, cc *clientcontext.ClientContext, opts ...Option) (*Cl
 	return c, nil
 }
 
+// Meta carries response-level metadata for callers (e.g. `auth status`) that
+// need the server clock and round-trip latency in addition to the decoded body.
+type Meta struct {
+	StatusCode int
+	RequestID  string
+	// Date is the server's HTTP `Date` header, when present (used for clock-drift
+	// estimation). Zero when absent/unparseable.
+	Date time.Time
+	// Latency is the measured request round-trip time.
+	Latency time.Duration
+}
+
 // Do performs a JSON request: it marshals reqBody (nil for none), sends it, and
 // decodes a JSON response into respOut (nil to ignore). It returns an *APIError
 // for non-2xx responses, carrying the request ID for correlation.
 func (c *Client) Do(ctx context.Context, method, path string, reqBody, respOut any) error {
+	_, err := c.DoWithMeta(ctx, method, path, reqBody, respOut)
+	return err
+}
+
+// DoWithMeta is Do plus response metadata (status, server Date, latency). The
+// decode/encode/error semantics are identical to Do.
+func (c *Client) DoWithMeta(ctx context.Context, method, path string, reqBody, respOut any) (*Meta, error) {
 	requestID := clientcontext.NewID()
 
 	var payload []byte
 	if reqBody != nil {
-		var err error
-		err = c.prof.Measure(performance.PhaseJSONEncode, func() error {
+		if err := c.prof.Measure(performance.PhaseJSONEncode, func() error {
 			var e error
 			payload, e = json.Marshal(reqBody)
 			return e
-		})
-		if err != nil {
-			return fmt.Errorf("encode request: %w", err)
+		}); err != nil {
+			return nil, fmt.Errorf("encode request: %w", err)
 		}
 	}
 
+	start := time.Now()
 	resp, raw, err := c.doWithRetry(ctx, method, path, payload, requestID)
+	latency := time.Since(start)
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	meta := &Meta{StatusCode: resp.StatusCode, RequestID: requestID, Latency: latency}
+	if dateStr := resp.Header.Get("Date"); dateStr != "" {
+		if t, perr := http.ParseTime(dateStr); perr == nil {
+			meta.Date = t
+		}
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return parseAPIError(resp.StatusCode, requestID, raw)
+		return meta, parseAPIError(resp.StatusCode, requestID, raw)
 	}
 
 	if respOut != nil && len(raw) > 0 {
 		if derr := c.prof.Measure(performance.PhaseJSONDecode, func() error {
 			return json.Unmarshal(raw, respOut)
 		}); derr != nil {
-			return fmt.Errorf("decode response: %w", derr)
+			return meta, fmt.Errorf("decode response: %w", derr)
 		}
 	}
-	return nil
+	return meta, nil
 }
 
 func (c *Client) doWithRetry(ctx context.Context, method, path string, payload []byte, requestID string) (*http.Response, []byte, error) {

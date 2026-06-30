@@ -22,6 +22,7 @@ const (
 	SourceDefault Source = "default"
 	SourceSystem  Source = "system-config"
 	SourceUser    Source = "user-config"
+	SourceProfile Source = "profile"
 	SourceEnv     Source = "environment"
 	SourceFlag    Source = "flag"
 )

@@ -20,17 +20,23 @@ import (
 type Phase string
 
 const (
-	PhaseStartup        Phase = "startup"
-	PhaseConfig         Phase = "configuration"
-	PhaseOAuth          Phase = "oauth"
-	PhaseDNS            Phase = "dns"
-	PhaseTLS            Phase = "tls"
-	PhaseHTTP           Phase = "http"
-	PhaseJSONEncode     Phase = "json_serialize"
-	PhaseJSONDecode     Phase = "json_parse"
-	PhaseCredentialLoad Phase = "credential_lookup"
-	PhaseResponseParse  Phase = "response_parse"
-	PhaseOverall        Phase = "overall"
+	PhaseStartup           Phase = "startup"
+	PhaseConfig            Phase = "configuration"
+	PhaseProviderDiscovery Phase = "provider_discovery"
+	PhaseOAuth             Phase = "oauth_start"
+	PhaseDeviceAuth        Phase = "device_authorization"
+	PhaseBrowser           Phase = "browser_launch"
+	PhasePolling           Phase = "polling"
+	PhaseTokenExchange     Phase = "token_exchange"
+	PhaseDNS               Phase = "dns"
+	PhaseTLS               Phase = "tls"
+	PhaseHTTP              Phase = "http"
+	PhaseJSONEncode        Phase = "json_serialize"
+	PhaseJSONDecode        Phase = "json_parse"
+	PhaseCredentialLoad    Phase = "credential_lookup"
+	PhaseCredentialStore   Phase = "credential_storage"
+	PhaseResponseParse     Phase = "response_parse"
+	PhaseOverall           Phase = "overall"
 )
 
 type sample struct {
@@ -120,9 +126,24 @@ func (p *Profiler) Table() string {
 	}
 	sort.SliceStable(list, func(i, j int) bool { return list[i].firstSeen < list[j].firstSeen })
 
+	// Denominator for percentages: the `overall` phase when present (it wraps the
+	// whole command), otherwise the sum of all samples.
+	var denom time.Duration
+	for _, a := range list {
+		if a.phase == PhaseOverall {
+			denom = a.total
+		}
+	}
+	if denom <= 0 {
+		for _, a := range list {
+			denom += a.total
+		}
+	}
+
 	const (
 		colPhase = "PHASE"
 		colDur   = "DURATION"
+		colPct   = "PERCENT"
 		colCalls = "CALLS"
 	)
 	width := len(colPhase)
@@ -133,10 +154,32 @@ func (p *Profiler) Table() string {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%-*s  %12s  %5s\n", width, colPhase, colDur, colCalls)
-	fmt.Fprintf(&b, "%s  %12s  %5s\n", strings.Repeat("-", width), strings.Repeat("-", 12), "-----")
+	fmt.Fprintf(&b, "%-*s  %12s  %8s  %5s\n", width, colPhase, colDur, colPct, colCalls)
+	fmt.Fprintf(&b, "%s  %12s  %8s  %5s\n", strings.Repeat("-", width), strings.Repeat("-", 12), strings.Repeat("-", 8), "-----")
 	for _, a := range list {
-		fmt.Fprintf(&b, "%-*s  %12s  %5d\n", width, string(a.phase), a.total.Round(time.Microsecond).String(), a.count)
+		pct := 0.0
+		if denom > 0 {
+			pct = float64(a.total) / float64(denom) * 100
+		}
+		fmt.Fprintf(&b, "%-*s  %12s  %7.1f%%  %5d\n",
+			width, string(a.phase), a.total.Round(time.Microsecond).String(), pct, a.count)
 	}
+	fmt.Fprintf(&b, "GRADE: %s  (total %s)\n", grade(denom), denom.Round(time.Microsecond).String())
 	return b.String()
+}
+
+// grade assigns a coarse performance grade from the overall command duration.
+func grade(total time.Duration) string {
+	switch {
+	case total <= 250*time.Millisecond:
+		return "A"
+	case total <= 750*time.Millisecond:
+		return "B"
+	case total <= 2*time.Second:
+		return "C"
+	case total <= 5*time.Second:
+		return "D"
+	default:
+		return "F"
+	}
 }

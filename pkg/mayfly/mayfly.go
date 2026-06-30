@@ -7,9 +7,14 @@
 package mayfly
 
 import (
+	"context"
+
+	"github.com/mayfly-ssh/mayfly-cli/internal/account"
+	"github.com/mayfly-ssh/mayfly-cli/internal/authflow"
 	"github.com/mayfly-ssh/mayfly-cli/internal/clientcontext"
 	"github.com/mayfly-ssh/mayfly-cli/internal/credentials"
 	"github.com/mayfly-ssh/mayfly-cli/internal/oauth"
+	"github.com/mayfly-ssh/mayfly-cli/internal/profile"
 	"github.com/mayfly-ssh/mayfly-cli/internal/version"
 )
 
@@ -30,17 +35,44 @@ func NewClientContext(storageBackend string) *ClientContext {
 
 // OAuth framework public types.
 type (
-	Provider     = oauth.Provider
-	Registry     = oauth.Registry
-	Metadata     = oauth.Metadata
-	OAuthSession = oauth.Session
-	OAuthToken   = oauth.Token
-	OAuthIdent   = oauth.Identity
-	TokenStore   = oauth.TokenStore
+	Provider            = oauth.Provider
+	RefreshableProvider = oauth.RefreshableProvider
+	Registry            = oauth.Registry
+	Metadata            = oauth.Metadata
+	Capabilities        = oauth.Capabilities
+	OAuthSession        = oauth.Session
+	OAuthToken          = oauth.Token
+	OAuthIdent          = oauth.Identity
+	TokenStore          = oauth.TokenStore
 )
 
 // NewRegistry returns an empty provider registry.
 func NewRegistry() *Registry { return oauth.NewRegistry() }
+
+// CapabilitiesOf reports a provider's capabilities.
+func CapabilitiesOf(p Provider) Capabilities { return oauth.CapabilitiesOf(p) }
+
+// Account management public types.
+type (
+	Account      = account.Account
+	AccountStore = account.Store
+	Profile      = profile.Profile
+	ProfileStore = profile.Store
+)
+
+// NewAccountStore opens the account index at path.
+func NewAccountStore(path string) *AccountStore { return account.NewStore(path) }
+
+// NewProfileStore opens the profiles file at path.
+func NewProfileStore(path string) *ProfileStore { return profile.NewStore(path) }
+
+// Login runs the interactive device-authorization flow and persists the result.
+type LoginOptions = authflow.Options
+
+// Login executes the device-flow login described by opts.
+func Login(ctx context.Context, opts LoginOptions) (*Account, error) {
+	return authflow.Login(ctx, opts)
+}
 
 // Credential storage public types.
 type (
