@@ -153,29 +153,41 @@ func (p *Provider) PollToken(ctx context.Context, deviceCode string) (*oauth.Pol
 }
 
 type whoamiResponse struct {
+	Provider string `json:"provider"`
+	Subject  string `json:"subject"`
+	Username string `json:"username"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	// Legacy GitHub-compatible fields, retained for older servers.
 	GitHubLogin string `json:"github_login"`
 	GitHubID    int64  `json:"github_id"`
-	Name        string `json:"name"`
-	Email       string `json:"email"`
 }
 
 // FetchIdentity resolves the identity for a token via the server's whoami
-// endpoint. The endpoint is GitHub-shaped today, so this is most useful for the
-// GitHub provider; other providers obtain identity directly from the approved
-// poll response and rarely need this call.
+// endpoint. It is provider-aware (sends ?provider=) and reads the
+// provider-neutral response (provider/subject/username/email/name); it falls
+// back to the legacy GitHub-shaped fields when talking to an older server.
 func (p *Provider) FetchIdentity(ctx context.Context, token *oauth.Token) (*oauth.Identity, error) {
 	c, err := p.newClient(func(context.Context) (string, error) { return token.AccessToken, nil })
 	if err != nil {
 		return nil, err
 	}
 	var w whoamiResponse
-	if err := c.Do(ctx, "GET", "/api/v1/auth/whoami", nil, &w); err != nil {
+	if err := c.Do(ctx, "GET", "/api/v1/auth/whoami?provider="+p.cfg.ID, nil, &w); err != nil {
 		return nil, err
+	}
+	username := w.Username
+	if username == "" {
+		username = w.GitHubLogin
+	}
+	subject := w.Subject
+	if subject == "" && w.GitHubID != 0 {
+		subject = strconv.FormatInt(w.GitHubID, 10)
 	}
 	return &oauth.Identity{
 		Provider: p.cfg.ID,
-		Subject:  strconv.FormatInt(w.GitHubID, 10),
-		Username: w.GitHubLogin,
+		Subject:  subject,
+		Username: username,
 		Email:    w.Email,
 		Name:     w.Name,
 	}, nil

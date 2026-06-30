@@ -31,11 +31,14 @@ type Doer interface {
 	Do(ctx context.Context, method, path string, reqBody, respOut any) error
 }
 
-// issueRequest mirrors the server's IssueCertificateRequest wire shape.
+// issueRequest mirrors the server's IssueCertificateRequest wire shape. The
+// optional provider selects the IdP that issued the bearer token so issuance is
+// provider-agnostic (the server defaults to its configured provider when empty).
 type issueRequest struct {
 	PublicKey  string `json:"public_key"`
 	Hostname   string `json:"hostname"`
 	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+	Provider   string `json:"provider,omitempty"`
 }
 
 // IssueResponse mirrors the server's CertificateResponse wire shape.
@@ -158,6 +161,7 @@ func (m *Manager) issue(ctx context.Context, api Doer, id certcache.Identity, ho
 			PublicKey:  kp.PublicAuthorizedKey,
 			Hostname:   hostname,
 			TTLSeconds: ttl,
+			Provider:   id.Provider,
 		}, &resp)
 	}); err != nil {
 		return nil, fmt.Errorf("requesting certificate: %w", err)
