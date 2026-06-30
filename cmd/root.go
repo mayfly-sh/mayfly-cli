@@ -147,6 +147,7 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newCertCommand())
 	root.AddCommand(newSSHCommand())
 	root.AddCommand(newMachineCommand())
+	root.AddCommand(newCACommand())
 	return root
 }
 

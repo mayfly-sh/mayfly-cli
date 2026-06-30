@@ -2,15 +2,17 @@
 
 The Mayfly zero-trust SSH access CLI (Go).
 
-> **Status (Milestone 013A).** The CLI is now the **primary operator interface**:
+> **Status (Milestone 013B).** The CLI is now the **primary operator interface**:
 > the **authentication** (`login`/`logout`/`whoami`/`auth …`, 011B), **SSH/cert**
-> (`ssh`, `cert …`, 011C), and **machine administration** (`machine …`, 013A)
-> experiences are all implemented on the 011A SDK, with multi-account + profiles,
-> `table`/`wide`/`json`/`yaml` output, `--watch`, filtering, and developer-mode
-> timing. No operator needs to call the REST API by hand.
+> (`ssh`, `cert …`, 011C), **machine administration** (`machine …`, 013A), and
+> **CA administration** (`ca …`, 013B) experiences are all implemented on the 011A
+> SDK, with multi-account + profiles, `table`/`wide`/`json`/`yaml` output,
+> `--watch`, filtering, guided CA rotation, and developer-mode timing. No operator
+> needs to call the REST API by hand.
 > See `docs/authentication.md`, `docs/configuration.md`, `docs/ssh.md`,
-> `docs/certificates.md`, `docs/machines.md`, `docs/developer-mode.md`,
-> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`–`ADR-0022`.
+> `docs/certificates.md`, `docs/machines.md`, `docs/ca.md`, `docs/rotation.md`,
+> `docs/developer-mode.md`,
+> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`–`ADR-0023`.
 
 ## Build & test
 
@@ -82,6 +84,23 @@ go build -ldflags "\
 ./mayfly machine heartbeat <id>            # observe liveness (agents heartbeat on their own cadence)
 ./mayfly machine sync <id>                 # observe CA-bundle convergence
 
+# CA administration — the only interface needed to manage SSH CAs (no manual REST)
+./mayfly ca list                           # status, in-bundle, issued counts; -o wide|json|yaml
+./mayfly ca show <ca-id> -o yaml           # full detail incl. activation history
+./mayfly ca create mayfly-ca-2026q3 --passphrase "$PASS"   # or set MAYFLY_CA_PASSPHRASE
+./mayfly ca import legacy-ca --private-key-file ./ca_ed25519
+./mayfly ca rotate                         # guided rotation: new CA + fleet rollout + warnings
+./mayfly ca rollout --watch                # watch the fleet converge on the new generation
+./mayfly ca enable  <ca-id>
+./mayfly ca disable <ca-id>
+./mayfly ca retire  <ca-id> --yes          # destroy key material, keep audit row
+./mayfly ca delete  <ca-id> --yes          # remove row + key file (disabled CAs only)
+./mayfly ca stats                          # aggregate signing statistics
+./mayfly ca current                        # the active CA bundle (enabled CAs)
+./mayfly ca export --all > trusted_user_ca_keys
+./mayfly ca public-key <ca-id>             # raw OpenSSH key line (pipe-friendly)
+./mayfly ca fingerprint                    # bundle fingerprint (or a CA's with an id)
+
 # Profiles, JSON, developer timing
 ./mayfly --profile staging whoami --json
 ./mayfly --dev login github
@@ -97,6 +116,7 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 [`docs/configuration.md`](docs/configuration.md),
 [`docs/ssh.md`](docs/ssh.md), [`docs/certificates.md`](docs/certificates.md),
 [`docs/machines.md`](docs/machines.md),
+[`docs/ca.md`](docs/ca.md), [`docs/rotation.md`](docs/rotation.md),
 [`docs/developer-mode.md`](docs/developer-mode.md).
 
 ## Architecture (summary)
@@ -117,9 +137,10 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 | `internal/certcache` | secure per-identity certificate cache (0700 dir / 0600 key, atomic, symlink-rejecting); metadata + expiry pruning |
 | `internal/certs` | certificate lifecycle: issue + reuse/renew/reissue decision (never serves an expired cert) + local inspect |
 | `internal/machineadmin` | machine-administration client types (mirror server DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml` via `tabwriter` + `yaml.v3`): machine + fleet summaries |
+| `internal/caadmin` | CA-administration client types (mirror server `CaView`/`CaStats`/`RotationResult` DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml`): CA list/detail, stats, public bundle, rollout, guided rotation |
 | `internal/config` | layered config: flags > profile > env > user > system > defaults, with value origins |
 | `internal/platform` / `hardware` / `machine` / `version` / `logging` | environment & identity helpers |
-| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `machine …`, `version`, `diagnostics` |
+| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `machine …`, `ca …`, `version`, `diagnostics` |
 | `pkg/mayfly` | stable public API facade |
 
 ## Configuration precedence
@@ -129,7 +150,8 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 - User config: `${XDG_CONFIG_HOME:-~/.config}/mayfly/config.json`
 - System config: `/etc/mayfly/config.json`
 - Key env vars: `MAYFLY_SERVER_URL`, `MAYFLY_PROVIDER`, `MAYFLY_CREDENTIAL_BACKEND`,
-  `MAYFLY_GITHUB_CLIENT_ID`, `MAYFLY_KEYCLOAK_ISSUER`, `MAYFLY_KEYCLOAK_CLIENT_ID`.
+  `MAYFLY_GITHUB_CLIENT_ID`, `MAYFLY_KEYCLOAK_ISSUER`, `MAYFLY_KEYCLOAK_CLIENT_ID`,
+  `MAYFLY_CA_PASSPHRASE` (storage passphrase for `ca create`/`import`/`rotate`).
 
 ## Privacy
 
