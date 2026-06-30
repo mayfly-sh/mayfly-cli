@@ -2,12 +2,15 @@
 
 The Mayfly zero-trust SSH access CLI (Go).
 
-> **Status (Milestone 011B).** The full **authentication experience** is
-> implemented on the 011A SDK: `login` / `logout` / `whoami` / `auth …` /
-> `version`, multi-account + profiles, and developer-mode timing. Login is
-> brokered through the mayfly-server (ADR-0019). SSH commands come next.
-> See `docs/authentication.md`, `docs/configuration.md`, `docs/developer-mode.md`,
-> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`/`ADR-0019`.
+> **Status (Milestone 013A).** The CLI is now the **primary operator interface**:
+> the **authentication** (`login`/`logout`/`whoami`/`auth …`, 011B), **SSH/cert**
+> (`ssh`, `cert …`, 011C), and **machine administration** (`machine …`, 013A)
+> experiences are all implemented on the 011A SDK, with multi-account + profiles,
+> `table`/`wide`/`json`/`yaml` output, `--watch`, filtering, and developer-mode
+> timing. No operator needs to call the REST API by hand.
+> See `docs/authentication.md`, `docs/configuration.md`, `docs/ssh.md`,
+> `docs/certificates.md`, `docs/machines.md`, `docs/developer-mode.md`,
+> `../.cursor/outputs/analysis/architecture/cli.md`, and `ADR-0018`–`ADR-0022`.
 
 ## Build & test
 
@@ -63,10 +66,27 @@ go build -ldflags "\
 ./mayfly cert renew                     # reissue now
 ./mayfly cert remove --all
 
+# Machine administration — the CLI is the operator interface (no manual REST)
+./mayfly machine list                      # beautiful table; add -o wide|json|yaml
+./mayfly machine list --status active --online
+./mayfly machine list --hostname web --watch --interval 5s
+./mayfly machine show <machine-id> -o yaml
+./mayfly machine status                    # fleet rollout: generations, liveness, %
+./mayfly machine approve <id>              # pending -> active
+./mayfly machine disable <id>              # block until re-enabled (takes effect next request)
+./mayfly machine enable  <id>
+./mayfly machine revoke  <id> --yes        # permanently block
+./mayfly machine delete  <id> --yes        # remove the record
+./mayfly machine reenroll <id> --yes       # revoke + mint a fresh enrollment token
+./mayfly machine rotate-identity <id> --yes
+./mayfly machine heartbeat <id>            # observe liveness (agents heartbeat on their own cadence)
+./mayfly machine sync <id>                 # observe CA-bundle convergence
+
 # Profiles, JSON, developer timing
 ./mayfly --profile staging whoami --json
 ./mayfly --dev login github
 ./mayfly ssh --dev web-01               # certificate + connection timing
+./mayfly machine list --dev            # API / formatting / rendering timings
 
 # Foundation utilities
 ./mayfly version --json
@@ -76,6 +96,7 @@ go build -ldflags "\
 Full guides: [`docs/authentication.md`](docs/authentication.md),
 [`docs/configuration.md`](docs/configuration.md),
 [`docs/ssh.md`](docs/ssh.md), [`docs/certificates.md`](docs/certificates.md),
+[`docs/machines.md`](docs/machines.md),
 [`docs/developer-mode.md`](docs/developer-mode.md).
 
 ## Architecture (summary)
@@ -95,9 +116,10 @@ Full guides: [`docs/authentication.md`](docs/authentication.md),
 | `internal/sshkey` | Ed25519 keygen + OpenSSH private-key/public-line/fingerprint marshaling |
 | `internal/certcache` | secure per-identity certificate cache (0700 dir / 0600 key, atomic, symlink-rejecting); metadata + expiry pruning |
 | `internal/certs` | certificate lifecycle: issue + reuse/renew/reissue decision (never serves an expired cert) + local inspect |
+| `internal/machineadmin` | machine-administration client types (mirror server DTOs) + presentation-only rendering (`table`/`wide`/`json`/`yaml` via `tabwriter` + `yaml.v3`): machine + fleet summaries |
 | `internal/config` | layered config: flags > profile > env > user > system > defaults, with value origins |
 | `internal/platform` / `hardware` / `machine` / `version` / `logging` | environment & identity helpers |
-| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `version`, `diagnostics` |
+| `cmd/` | cobra commands: `login`, `logout`, `whoami`, `auth …`, `ssh`, `cert …`, `machine …`, `version`, `diagnostics` |
 | `pkg/mayfly` | stable public API facade |
 
 ## Configuration precedence
